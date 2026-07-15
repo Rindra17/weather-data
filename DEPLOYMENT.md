@@ -4,6 +4,11 @@
 > **Target stack:** Docker Compose · Apache Airflow 3.3.0 · PostgreSQL 16 · Redis 7  
 > **OS:** Ubuntu 22.04 LTS or 24.04 LTS (other Debian-based distros similar)
 
+> **💡 Tip:** A `Makefile` is provided in the repository root with common commands.
+> Run `make help` to see all available targets.  Most deployment operations
+> below can be performed with `make <target>` instead of typing full
+> `docker compose` commands.
+
 ---
 
 ## Table of Contents
@@ -171,30 +176,24 @@ All secrets are stored as plain-text files under `secrets/`. The directory is
 git-ignored and must never be committed.  The Compose file mounts these as
 [Docker secrets](https://docs.docker.com/compose/use-secrets/) at `/run/secrets/`.
 
+> **💡 Tip:** Use the Makefile to generate all secrets at once — it is
+> **idempotent** and will not overwrite existing files.
+
 ```bash
 cd /home/deploy/weather-data
-mkdir -p secrets
-chmod 700 secrets
 
-# PostgreSQL password (used by both Airflow and the DB init)
-python3 -c "import secrets; print(secrets.token_urlsafe(32))" \
-  > secrets/postgres_password.txt
-
-# Redis password
-python3 -c "import secrets; print(secrets.token_urlsafe(32))" \
-  > secrets/redis_password.txt
-
-# Fernet key (Airflow encrypts connection passwords and variables with this)
-python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" \
-  > secrets/fernet_key.txt
-
-# JWT secret (Airflow API authentication)
-python3 -c "import secrets; print(secrets.token_urlsafe(64))" \
-  > secrets/jwt_secret.txt
-
-# Secure the files
-chmod 600 secrets/*.txt
+# Generate all secret files (idempotent — safe to re-run)
+make secrets
 ```
+
+This creates the following files in `secrets/`:
+
+| File                        | Purpose                                           |
+|-----------------------------|---------------------------------------------------|
+| `postgres_password.txt`     | PostgreSQL password (used by Airflow and DB init) |
+| `redis_password.txt`        | Redis password                                    |
+| `fernet_key.txt`            | Fernet key (encrypts connections & variables)     |
+| `jwt_secret.txt`            | JWT secret (Airflow API authentication)           |
 
 > **⚠️  Warning:** Losing `fernet_key.txt` makes all previously stored Airflow
 > connections and variables **undecryptable**.  Back up the `secrets/` directory
@@ -303,15 +302,17 @@ cd /home/deploy/weather-data
 docker compose pull
 
 # Start all services in detached mode
-docker compose up -d
+make start
 
 # Verify
-docker compose ps
-docker compose logs --tail=50
+make ps
+docker compose logs --tail=50   # one-time view of recent logs
 ```
 
 The Airflow API server is now reachable at **http://\<your-vps-ip\>:8080**.
 Log in with the admin credentials set in `.env`.
+
+> Subsequent starts / stops can use `make start`, `make stop`, or `make restart`.
 
 ### 5.4 Post-deployment Checks
 
@@ -382,7 +383,7 @@ rm -rf "$BACKUP_DIR"
 
 ```bash
 # 1. Stop all services
-docker compose down
+make stop
 
 # 2. Restore secrets and env
 cp /path/to/backup/secrets/*.txt ./secrets/
@@ -395,12 +396,12 @@ docker compose exec -T postgres \
   psql -U airflow -d airflow < /path/to/backup/airflow-db.sql
 
 # 4. Restart all services
-docker compose up -d
+make start
 ```
 
 > **Warning:** The PostgreSQL container must be fresh (empty volume) or you
 > must drop the existing `airflow` schema before restoring.  To start fresh:
-> `docker compose down -v` (⚠️ **this destroys all volumes**).
+> `make clean` (⚠️ **this destroys all volumes**).
 
 ---
 
@@ -418,13 +419,16 @@ Replace `localhost` with the VPS IP when checking from an external machine.
 ### 7.2 Container Logs
 
 ```bash
-# Tail logs for all services
-docker compose logs --tail=100 -f
+# Tail logs for all services (follow)
+make logs
 
 # Tail a single service
-docker compose logs --tail=100 -f airflow-apiserver
+make logs-airflow-apiserver   # also: logs-airflow-scheduler,
+                              #       logs-airflow-worker,
+                              #       logs-postgres,
+                              #       logs-redis
 
-# Search for errors
+# Search for errors (using the underlying compose command)
 docker compose logs --tail=1000 airflow-scheduler | grep -i error
 
 # Log to a file
@@ -477,8 +481,8 @@ sudo nano /etc/logrotate.d/docker
 ### 8.1 Containers Keep Restarting
 
 ```bash
-# Inspect logs
-docker compose logs --tail=50 <service-name>
+# Inspect logs (use the make target for the relevant service)
+make logs-<service-name>                # e.g. make logs-airflow-scheduler
 
 # Check if the init container completed
 docker compose logs --tail=30 airflow-init
@@ -529,8 +533,8 @@ docker compose logs --tail=100 airflow-init
 # - Existing corrupt database in the volume
 
 # To start from scratch (destroys all data):
-docker compose down -v
-docker compose up -d
+make clean     # equivalent to docker compose down -v --rmi all
+make start
 ```
 
 ### 8.5 429 Too Many Requests
@@ -583,7 +587,7 @@ docker compose logs --tail=30 -f airflow-init   # wait for completion
 docker compose up -d --remove-orphans
 
 # 5. Verify
-docker compose ps
+make ps
 ```
 
 ### 9.2 Upgrade to a New Minor/Major Version (e.g. 3.4.0)
@@ -604,6 +608,7 @@ docker compose ps
 # Upgrade base images without changing Airflow
 docker compose pull postgres redis
 docker compose up -d --remove-orphans
+# or use: make restart
 ```
 
 ### 9.4 Rollback
@@ -612,7 +617,7 @@ docker compose up -d --remove-orphans
 # Revert .env to the previous image tag
 # Re-run init and services:
 docker compose up -d airflow-init
-docker compose up -d --remove-orphans
+docker compose up -d --remove-orphans   # or: make restart
 ```
 
 If the rollback involves a database schema change that is not backward
@@ -762,7 +767,7 @@ services:
 Then restart:
 
 ```bash
-docker compose up -d
+make start
 ```
 
 ### 10.5 Set Up Auto-renewal
@@ -812,17 +817,23 @@ curl -s -o /dev/null -w "%{http_code}" https://your-domain.com/api/v2/monitor/he
 
 ### Useful Commands
 
-| Action                                           | Command                                                       |
-|--------------------------------------------------|---------------------------------------------------------------|
-| Start all services                               | `docker compose up -d`                                        |
-| Stop all services                                | `docker compose down`                                         |
-| Restart a service                                | `docker compose restart <service>`                            |
-| View logs (follow)                               | `docker compose logs -f <service>`                            |
-| Execute a command inside a running container     | `docker compose exec <service> <command>`                     |
-| Enter a container shell                          | `docker compose exec <service> bash`                          |
-| Inspect image layers                             | `docker history airflow-custom:latest`                        |
-| List Docker networks                             | `docker network ls`                                           |
-| Inspect network (find container IPs)             | `docker network inspect weather_data_backend`                 |
+| Action                                           | Make Target / Command                                            |
+|--------------------------------------------------|------------------------------------------------------------------|
+| Build all Docker images                          | `make build`                                                     |
+| Start all services                               | `make start`                                                     |
+| Stop all services                                | `make stop`                                                      |
+| Restart all services                             | `make restart`                                                   |
+| View logs (follow all services)                  | `make logs`                                                      |
+| View logs (single service)                       | `make logs-airflow-apiserver` (similar for scheduler, worker…)  |
+| Show running containers                          | `make ps`                                                        |
+| Generate secret files (idempotent)               | `make secrets`                                                   |
+| Stop and remove all (incl. volumes)              | `make clean`                                                     |
+| Show available commands                          | `make help`                                                      |
+| Execute a command inside a running container     | `docker compose exec <service> <command>`                        |
+| Enter a container shell                          | `docker compose exec <service> bash`                             |
+| Inspect image layers                             | `docker history airflow-custom:latest`                           |
+| List Docker networks                             | `docker network ls`                                              |
+| Inspect network (find container IPs)             | `docker network inspect weather_data_backend`                    |
 
 ### Ports Reference
 
