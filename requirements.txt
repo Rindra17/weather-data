@@ -1,0 +1,16 @@
+# =============================================================================
+# Additional Python packages for Airflow
+#
+# Install with:
+#   pip install -r requirements.txt
+#
+# Packages listed here are installed on top of the base
+# apache/airflow:3.3.0 image.  Use this file when you need providers or
+# libraries that are not included in the base image.
+#
+# Examples:
+#   apache-airflow-providers-http
+#   apache-airflow-providers-postgres
+#   requests
+#   pandas
+# =============================================================================

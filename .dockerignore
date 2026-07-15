@@ -1,0 +1,58 @@
+# =============================================================================
+# .dockerignore — files and directories to exclude from the Docker build
+# context when building the custom Airflow image.
+# =============================================================================
+
+# Git
+.git/
+.gitignore
+
+# Environment files (may contain secrets)
+.env
+.env.production
+.env.*.local
+
+# Secrets directory (sensitive credentials)
+secrets/
+
+# Logs (not needed at build time)
+logs/
+
+# Docker volumes (PostgreSQL, Redis)
+# (These are Docker-managed, not present in the project dir)
+
+# Certbot certificates and challenge files
+certbot/
+
+# nginx configuration (not needed for the Airflow image build)
+nginx/
+
+# Development / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Backup files
+backups/
+
+# Config (airflow.cfg) — not needed at image build time.  It is mounted
+# at runtime by docker-compose.yaml.
+config/
+
+# DAGs and plugins are mounted at runtime, not baked into the image
+# (they are included in the build context by default, but we exclude them
+# because they change frequently and are not needed at image build time).
+# Uncomment the following lines if you want a truly minimal context:
+# dags/
+# plugins/
+
+# Docker compose files
+docker-compose*.yaml
+docker-compose*.yml
+
+# Documentation (not needed at build time)
+DEPLOYMENT.md
+README.md

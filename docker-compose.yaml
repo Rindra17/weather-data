@@ -1,0 +1,480 @@
+# =============================================================================
+# Production Docker Compose for Apache Airflow (CeleryExecutor)
+#
+# Deploys: PostgreSQL, Redis, Airflow API server, Scheduler, DAG Processor,
+#          Celery Worker, Triggerer, and a one-shot init container.
+#
+# Differences from the development compose file:
+#   - No exposed ports (external access via a reverse proxy).
+#   - Docker secrets for passwords, Fernet key, and JWT secret.
+#   - Resource limits (CPU & memory) on every service.
+#   - JSON-file logging driver with rotation.
+#   - Optimised PostgreSQL and Redis configuration.
+#   - Isolated bridge network (backend).
+#   - Health checks with production-friendly intervals.
+#
+# Prerequisites:
+#   1. Create secret files under ./secrets/ (see .env.production.template).
+#   2. Set AIRFLOW_UID (default 50000) to match the host user.
+#   3. Docker Compose v2.20+ or Docker Engine 24+ recommended.
+# =============================================================================
+
+---
+# -- Shared configuration anchor for all Airflow services ---------------------
+x-airflow-common: &airflow-common
+  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.3.0}
+  env_file:
+    - ${ENV_FILE_PATH:-.env}
+  environment:
+    &airflow-common-env # --- Executor & Auth ----------------------------------------------------
+    AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: >-
+      airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+
+    # --- Celery broker (Redis) ----------------------------------------------
+    # Redis password is supplied via AIRFLOW__CELERY__BROKER_URL; the entrypoint
+    # script does NOT override this var, so it can be set here or in .env.
+    AIRFLOW__CELERY__BROKER_URL: ${AIRFLOW__CELERY__BROKER_URL:-redis://:@redis:6379/0}
+
+    # --- Core behaviour -----------------------------------------------------
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+
+    # --- API server ---------------------------------------------------------
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: >-
+      http://airflow-apiserver:8080/execution/
+    AIRFLOW__API_AUTH__JWT_ISSUER: ${AIRFLOW__API_AUTH__JWT_ISSUER:-airflow}
+
+    # --- Scheduler health-check server --------------------------------------
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+
+    # --- DB connection strings are set by scripts/entrypoint-prod.sh --------
+    # They are NOT declared here because they require the postgres_password
+    # secret, which is only available inside the container at runtime.
+    # AIRFLOW__DATABASE__SQL_ALCHEMY_CONN  ← set by entrypoint-prod.sh
+    # AIRFLOW__CELERY__RESULT_BACKEND      ← set by entrypoint-prod.sh
+    # AIRFLOW__CORE__FERNET_KEY            ← set by entrypoint-prod.sh
+    # AIRFLOW__API_AUTH__JWT_SECRET        ← set by entrypoint-prod.sh
+
+  # -- Custom entrypoint that loads Docker secrets before Airflow starts -----
+  entrypoint:
+    - /bin/bash
+    - /opt/airflow/scripts/entrypoint-prod.sh
+
+  # -- Bind mounts (DAGs, logs, config, plugins) ----------------------------
+  volumes:
+    - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
+    - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
+    - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
+    - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
+    # Mount the entrypoint script and the shared secrets directory so the
+    # custom entrypoint is available and secrets are accessible at runtime.
+    - ${AIRFLOW_PROJ_DIR:-.}/scripts:/opt/airflow/scripts:ro
+    - ${AIRFLOW_PROJ_DIR:-.}/secrets:/opt/airflow/secrets:ro
+
+  user: "${AIRFLOW_UID:-50000}:0"
+
+  # -- Logging (json-file with rotation) -------------------------------------
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+  # -- Restart policy (Docker daemon applies exponential backoff) ------------
+  restart: unless-stopped
+
+  # -- Internal network (no exposed ports) -----------------------------------
+  networks:
+    - backend
+
+  # -- Shared dependencies (health gates) ------------------------------------
+  depends_on: &airflow-common-depends-on
+    redis:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+
+  # -- Resource limits -------------------------------------------------------
+  # NOTE: `mem_limit` / `cpus` are honoured by `docker compose up` directly.
+  # The `deploy.resources` block is ignored in non-swarm mode but serves as
+  # documentation and is active when deployed to a Docker Swarm.
+  mem_limit: 2G
+  cpus: "1.0"
+  deploy:
+    resources:
+      limits:
+        cpus: "1.0"
+        memory: 2G
+      reservations:
+        cpus: "0.5"
+        memory: 1G
+
+# =============================================================================
+# Services
+# =============================================================================
+services:
+  # -- PostgreSQL ------------------------------------------------------------
+  postgres:
+    image: postgres:16
+    secrets:
+      - postgres_password
+    environment:
+      POSTGRES_USER: airflow
+      # Official postgres image supports *_FILE variants for secrets.
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_DB: airflow
+
+      # Performance tuning (overrides the default postgres.conf values).
+      POSTGRES_SHARED_BUFFERS: 512MB # 25 % of available RAM
+      POSTGRES_WORK_MEM: 64MB
+      POSTGRES_MAINTENANCE_WORK_MEM: 128MB
+      POSTGRES_EFFECTIVE_CACHE_SIZE: 1.5GB
+      POSTGRES_MAX_CONNECTIONS: 50 # Airflow + Celery result backend
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - backend
+    mem_limit: 2G
+    cpus: "1.0"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+
+  # -- Redis -----------------------------------------------------------------
+  redis:
+    image: redis:7.2-bookworm
+    # Redis password is read from the secret file and passed via --requirepass
+    # in the command below.  The broker URL in Airflow must match.
+    secrets:
+      - redis_password
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --save
+      - "900 1"
+      - --save
+      - "300 10"
+      - --save
+      - "60 10000"
+      - --maxmemory
+      - 384mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --requirepass
+      - ${REDIS_PASSWORD}
+    volumes:
+      - redis-data-volume:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - backend
+    mem_limit: 512M
+    cpus: "0.5"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
+  # -- Airflow API server ----------------------------------------------------
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    secrets:
+      - postgres_password
+      - fernet_key
+      - jwt_secret
+    healthcheck:
+      test:
+        ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    ports:
+      - "8080:8080"
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  # -- Airflow Scheduler -----------------------------------------------------
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    secrets:
+      - postgres_password
+      - fernet_key
+      - jwt_secret
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          airflow jobs check --job-type SchedulerJob
+          --hostname "$${HOSTNAME}"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  # -- Airflow DAG Processor -------------------------------------------------
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    secrets:
+      - postgres_password
+      - fernet_key
+      - jwt_secret
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          airflow jobs check --job-type DagProcessorJob
+          --hostname "$${HOSTNAME}"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  # -- Airflow Celery Worker -------------------------------------------------
+  airflow-worker:
+    <<: *airflow-common
+    command: celery worker
+    secrets:
+      - postgres_password
+      - fernet_key
+      - jwt_secret
+    environment:
+      <<: *airflow-common-env
+      # Required to handle warm shutdown of Celery workers properly.
+      # See https://airflow.apache.org/docs/docker-stack/entrypoint.html#signal-propagation
+      DUMB_INIT_SETSID: "0"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          celery --app airflow.providers.celery.executors.celery_executor.app
+          inspect ping -d "celery@$${HOSTNAME}"
+          || celery --app airflow.executors.celery_executor.app
+          inspect ping -d "celery@$${HOSTNAME}"
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-apiserver:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    # Worker processes DAG tasks and can require more memory.
+    mem_limit: 4G
+    cpus: "2.0"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "1.0"
+          memory: 2G
+
+  # -- Airflow Triggerer -----------------------------------------------------
+  airflow-triggerer:
+    <<: *airflow-common
+    command: triggerer
+    secrets:
+      - postgres_password
+      - fernet_key
+      - jwt_secret
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          airflow jobs check --job-type TriggererJob
+          --hostname "$${HOSTNAME}"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  # -- Airflow initialisation (one-shot) -------------------------------------
+  # Runs DB migrations, creates the admin user, and sets up directory layout.
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        # ---- Load Docker secrets inline (entrypoint is /bin/bash) ---------
+        for secret_file in /run/secrets/*; do
+          [ -f "$${secret_file}" ] \
+            && export "$(basename "$${secret_file}")"="$$(cat "$${secret_file}")"
+        done
+
+        # ---- Construct connection strings from secrets --------------------
+        if [ -n "$${postgres_password:-}" ]; then
+          export AIRFLOW__DATABASE__SQL_ALCHEMY_CONN="postgresql+psycopg2://airflow:$${postgres_password}@postgres/airflow"
+          export AIRFLOW__CELERY__RESULT_BACKEND="db+postgresql+psycopg2://airflow:$${postgres_password}@postgres/airflow"
+        fi
+        if [ -n "$${fernet_key:-}" ]; then
+          export AIRFLOW__CORE__FERNET_KEY="$${fernet_key}"
+        fi
+        if [ -n "$${jwt_secret:-}" ]; then
+          export AIRFLOW__API_AUTH__JWT_SECRET="$${jwt_secret}"
+        fi
+
+        # ---- Standard initialisation --------------------------------------
+        echo "Creating missing opt dirs if missing:"
+        mkdir -v -p /opt/airflow/{logs,dags,plugins,config}
+
+        echo "Airflow version:"
+        /entrypoint airflow version
+
+        echo "Files in shared volumes:"
+        ls -la /opt/airflow/{logs,dags,plugins,config}
+
+        echo "Running airflow config list to create default config file if missing."
+        /entrypoint airflow config list >/dev/null
+
+        echo "Files in shared volumes:"
+        ls -la /opt/airflow/{logs,dags,plugins,config}
+
+        echo "Change ownership of files in /opt/airflow (excluding read-only mounts) to ${AIRFLOW_UID:-50000}:0"
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /opt/airflow/config 2>/dev/null || true
+
+        echo "Change ownership of files in shared volumes:"
+        chown -v -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/{logs,dags,plugins,config} 2>/dev/null || true
+
+        echo "Files in shared volumes:"
+        ls -la /opt/airflow/{logs,dags,plugins,config}
+
+        echo "Running DB migration and creating admin user..."
+        exec /entrypoint airflow db migrate
+    secrets:
+      - postgres_password
+      - fernet_key
+      - jwt_secret
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+    user: "0:0"
+    mem_limit: 1G
+    cpus: "0.5"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 512M
+    restart: on-failure:2
+
+  # -- (Optional) Flower monitoring (disabled by default) --------------------
+  # Uncomment the profile line below to enable:
+  #   docker compose --profile flower up -d
+  flower:
+    <<: *airflow-common
+    command: celery flower
+    profiles:
+      - flower
+    secrets:
+      - postgres_password
+      - fernet_key
+      - jwt_secret
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:5555/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    # Port is NOT exposed to the host.  Use a reverse proxy to access Flower.
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  postgres-db-volume:
+    driver: local
+    name: weather_data_postgres_prod
+  redis-data-volume:
+    driver: local
+    name: weather_data_redis_prod
+
+# =============================================================================
+# Secrets
+# =============================================================================
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password.txt
+  redis_password:
+    file: ./secrets/redis_password.txt
+  fernet_key:
+    file: ./secrets/fernet_key.txt
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  backend:
+    driver: bridge
+    name: weather_data_backend
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
