@@ -61,12 +61,14 @@ x-airflow-common: &airflow-common
     - /bin/bash
     - /opt/airflow/scripts/entrypoint-prod.sh
 
-  # -- Bind mounts (DAGs, logs, config, plugins) ----------------------------
+  # -- Bind mounts (DAGs, logs, config, plugins, raw/clean output) -----------
   volumes:
     - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
     - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
+    - ${AIRFLOW_PROJ_DIR:-.}/raw:/opt/airflow/raw
+    - ${AIRFLOW_PROJ_DIR:-.}/clean:/opt/airflow/clean
     # Mount the entrypoint script and the shared secrets directory so the
     # custom entrypoint is available and secrets are accessible at runtime.
     - ${AIRFLOW_PROJ_DIR:-.}/scripts:/opt/airflow/scripts:ro
@@ -475,6 +477,7 @@ networks:
   backend:
     driver: bridge
     name: weather_data_backend
-    ipam:
-      config:
-        - subnet: 172.28.0.0/16
+    # No fixed subnet: this host already has ~15 other Docker projects
+    # occupying the entire 172.17.0.0/16-172.31.0.0/16 default pool
+    # (e.g. serveng-garage owns 172.28.0.0/16). Let the Docker daemon pick
+    # a free subnet automatically to avoid colliding with them.
