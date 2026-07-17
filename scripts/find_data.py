@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from pathlib import Path
 import csv
+import json
 import os
 import requests
 
@@ -61,10 +62,15 @@ def fetch_and_write() -> list[str]:
     run_timestamp = datetime.now(timezone.utc).isoformat()
     RAW_DIR.mkdir(parents=True, exist_ok=True)
 
+    city_names = list(CITY_NAMES)
+    cities_env = os.getenv("CITIES")
+    if cities_env:
+        city_names.extend(json.loads(cities_env))
+
     written_files = []
     errors = []
 
-    for city_name in CITY_NAMES:
+    for city_name in city_names:
         try:
             geo = geocode_city(city_name, api_key)
             response = requests.get(
