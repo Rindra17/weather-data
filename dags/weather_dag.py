@@ -1,20 +1,8 @@
 from airflow.decorators import dag, task
 from datetime import datetime
 from pathlib import Path
-import sys
 
-DAGS_DIR = Path(__file__).resolve().parent
-
-for p in [
-    str(DAGS_DIR),
-    str(DAGS_DIR.parent / "scripts"),
-    "/opt/airflow/scripts",
-]:
-    if p not in sys.path:
-        sys.path.insert(0, p)
-
-import find_data
-import transform_data
+from lib import find_data, transform_data
 
 RAW_DIR = Path("/opt/airflow/raw")
 CLEAN_DIR = Path("/opt/airflow/clean")
