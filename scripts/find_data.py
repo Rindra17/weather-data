@@ -1,7 +1,6 @@
 from datetime import datetime, timezone
 from pathlib import Path
 import csv
-import json
 import os
 import requests
 
@@ -34,8 +33,24 @@ FIELDNAMES = [
 RAW_DIR = Path("data/raw")
 
 
+CITY_NAMES = ["delhi", "london", "new york", "paris", "tokyo"]
+
+
 def sanitize_city_name(name: str) -> str:
     return name.lower().replace(" ", "_")
+
+
+def geocode_city(name: str, api_key: str) -> dict:
+    response = requests.get(
+        "http://api.openweathermap.org/geo/1.0/direct",
+        params={"q": name, "appid": api_key},
+        timeout=15,
+    )
+    response.raise_for_status()
+    data = response.json()
+    if not data:
+        raise ValueError(f"City '{name}' not found")
+    return {"name": data[0]["name"], "lat": data[0]["lat"], "lon": data[0]["lon"]}
 
 
 def fetch_and_write() -> list[str]:
@@ -43,22 +58,18 @@ def fetch_and_write() -> list[str]:
     if not api_key:
         raise ValueError("OPENWEATHER_API_KEY environment variable is not set")
 
-    cities_env = os.getenv("CITIES")
-    if not cities_env:
-        raise ValueError("CITIES environment variable is not set")
-    cities = json.loads(cities_env)
-
     run_timestamp = datetime.now(timezone.utc).isoformat()
     RAW_DIR.mkdir(parents=True, exist_ok=True)
 
     written_files = []
     errors = []
 
-    for city in cities:
+    for city_name in CITY_NAMES:
         try:
+            geo = geocode_city(city_name, api_key)
             response = requests.get(
                 "https://api.openweathermap.org/data/2.5/air_pollution",
-                params={"lat": city["lat"], "lon": city["lon"], "appid": api_key},
+                params={"lat": geo["lat"], "lon": geo["lon"], "appid": api_key},
                 timeout=15,
             )
             response.raise_for_status()
@@ -66,9 +77,9 @@ def fetch_and_write() -> list[str]:
             components = reading["components"]
             row = {
                 "run_timestamp": run_timestamp,
-                "city": city["name"],
-                "lat": city["lat"],
-                "lon": city["lon"],
+                "city": geo["name"],
+                "lat": geo["lat"],
+                "lon": geo["lon"],
                 "reading_at": datetime.fromtimestamp(
                     reading["dt"], tz=timezone.utc
                 ).isoformat(),
@@ -77,7 +88,7 @@ def fetch_and_write() -> list[str]:
                 **{field: components[field] for field in FIELDNAMES[7:]},
             }
 
-            city_filename = sanitize_city_name(city["name"]) + ".csv"
+            city_filename = sanitize_city_name(geo["name"]) + ".csv"
             city_file = RAW_DIR / city_filename
             file_exists = city_file.exists()
             with city_file.open("a", newline="") as f:
@@ -87,7 +98,7 @@ def fetch_and_write() -> list[str]:
                 writer.writerow(row)
             written_files.append(str(city_file))
         except Exception as e:
-            errors.append(f"Failed to fetch data for {city.get('name', city)}: {e}")
+            errors.append(f"Failed to fetch data for {city_name}: {e}")
 
     if errors:
         print("\n".join(errors))
