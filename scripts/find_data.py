@@ -34,12 +34,11 @@ FIELDNAMES = [
 RAW_DIR = Path("data/raw")
 
 
-def get_output_file() -> Path:
-    timestamp = datetime.now(timezone.utc).isoformat()
-    return RAW_DIR / f"{timestamp}_weather_data.csv"
+def sanitize_city_name(name: str) -> str:
+    return name.lower().replace(" ", "_")
 
 
-def fetch_and_write() -> str:
+def fetch_and_write() -> list[str]:
     api_key = os.getenv("OPENWEATHER_API_KEY")
     if not api_key:
         raise ValueError("OPENWEATHER_API_KEY environment variable is not set")
@@ -50,9 +49,9 @@ def fetch_and_write() -> str:
     cities = json.loads(cities_env)
 
     run_timestamp = datetime.now(timezone.utc).isoformat()
-    output_file = get_output_file()
+    RAW_DIR.mkdir(parents=True, exist_ok=True)
 
-    rows = []
+    written_files = []
     errors = []
 
     for city in cities:
@@ -65,35 +64,35 @@ def fetch_and_write() -> str:
             response.raise_for_status()
             reading = response.json()["list"][0]
             components = reading["components"]
-            rows.append(
-                {
-                    "run_timestamp": run_timestamp,
-                    "city": city["name"],
-                    "lat": city["lat"],
-                    "lon": city["lon"],
-                    "reading_at": datetime.fromtimestamp(
-                        reading["dt"], tz=timezone.utc
-                    ).isoformat(),
-                    "aqi": reading["main"]["aqi"],
-                    "aqi_label": AQI_LABELS.get(reading["main"]["aqi"], "Unknown"),
-                    **{field: components[field] for field in FIELDNAMES[7:]},
-                }
-            )
+            row = {
+                "run_timestamp": run_timestamp,
+                "city": city["name"],
+                "lat": city["lat"],
+                "lon": city["lon"],
+                "reading_at": datetime.fromtimestamp(
+                    reading["dt"], tz=timezone.utc
+                ).isoformat(),
+                "aqi": reading["main"]["aqi"],
+                "aqi_label": AQI_LABELS.get(reading["main"]["aqi"], "Unknown"),
+                **{field: components[field] for field in FIELDNAMES[7:]},
+            }
+
+            city_filename = sanitize_city_name(city["name"]) + ".csv"
+            city_file = RAW_DIR / city_filename
+            file_exists = city_file.exists()
+            with city_file.open("a", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+                if not file_exists:
+                    writer.writeheader()
+                writer.writerow(row)
+            written_files.append(str(city_file))
         except Exception as e:
             errors.append(f"Failed to fetch data for {city.get('name', city)}: {e}")
 
     if errors:
         print("\n".join(errors))
 
-    if not rows:
+    if not written_files:
         raise RuntimeError("No data was successfully fetched for any city")
 
-    RAW_DIR.mkdir(parents=True, exist_ok=True)
-    file_exists = output_file.exists()
-    with output_file.open("a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
-        if not file_exists:
-            writer.writeheader()
-        writer.writerows(rows)
-
-    return str(output_file)
+    return written_files
