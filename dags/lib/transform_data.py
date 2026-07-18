@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from pathlib import Path
 import csv
 
@@ -36,8 +35,8 @@ POLLUTANT_THRESHOLDS = {
 }
 
 
-def load_raw_rows(input_file: str) -> list[dict]:
-    with Path(input_file).open(newline="") as f:
+def load_raw_rows(input_file: Path) -> list[dict]:
+    with input_file.open(newline="") as f:
         reader = csv.DictReader(f)
         return list(reader)
 
@@ -86,19 +85,20 @@ def deduplicate(rows: list[dict]) -> list[dict]:
     return unique_rows
 
 
-def transform(input_file: str) -> str:
-    raw_rows = load_raw_rows(input_file)
-
+def transform() -> str:
+    """Combine every CSV in RAW_DIR into a single deduplicated clean file,
+    overwriting it on each call."""
     cleaned_rows = []
-    for row in raw_rows:
-        cleaned = clean_row(row)
-        if cleaned is not None:
-            cleaned_rows.append(enrich_row(cleaned))
+    for raw_file in sorted(RAW_DIR.glob("*.csv")):
+        for row in load_raw_rows(raw_file):
+            cleaned = clean_row(row)
+            if cleaned is not None:
+                cleaned_rows.append(enrich_row(cleaned))
 
     cleaned_rows = deduplicate(cleaned_rows)
 
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    output_file = PROCESSED_DIR / f"{datetime.now(timezone.utc).isoformat()}_weather_data_clean.csv"
+    output_file = PROCESSED_DIR / "weather_data_clean.csv"
 
     with output_file.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
