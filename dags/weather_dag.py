@@ -1,4 +1,4 @@
-from airflow.decorators import dag, task
+from airflow.sdk import dag, task
 from datetime import datetime
 from pathlib import Path
 
@@ -10,7 +10,7 @@ CLEAN_DIR = Path("/opt/airflow/clean")
 
 @dag(
     schedule="0 * * * *",
-    start_date=datetime(2024, 1, 1),
+    start_date=datetime(2026, 1, 1),
     catchup=False,
     max_active_runs=1,
 )
@@ -23,9 +23,9 @@ def weather_pipeline():
 
     @task
     def transform(raw_files: list[str]):
+        transform_data.RAW_DIR = RAW_DIR
         transform_data.PROCESSED_DIR = CLEAN_DIR
-        for f in raw_files:
-            transform_data.transform(f)
+        return transform_data.transform()
 
     transform(extract())
 
