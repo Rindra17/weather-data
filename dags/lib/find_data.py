@@ -1,9 +1,9 @@
+import csv
 from datetime import datetime, timezone
 from pathlib import Path
-import csv
-import json
-import os
+
 import requests
+from airflow.sdk import Variable
 
 AQI_LABELS = {
     1: "Good",
@@ -31,51 +31,40 @@ FIELDNAMES = [
     "nh3",
 ]
 
-RAW_DIR = Path("data/raw")
+BASE_DIR = Path(__file__).resolve().parent
+RAW_DIR = BASE_DIR / "data" / "raw"
 
-
-CITY_NAMES = ["delhi", "london", "new york", "paris", "tokyo"]
+CITIES = [
+    {"name": "London", "lat": 51.5074, "lon": -0.1278},
+    {"name": "Paris", "lat": 48.8566, "lon": 2.3522},
+    {"name": "New York", "lat": 40.7128, "lon": -74.0060},
+    {"name": "Tokyo", "lat": 35.6762, "lon": 139.6503},
+    {"name": "Delhi", "lat": 28.6139, "lon": 77.2090},
+]
 
 
 def sanitize_city_name(name: str) -> str:
     return name.lower().replace(" ", "_")
 
 
-def geocode_city(name: str, api_key: str) -> dict:
-    response = requests.get(
-        "http://api.openweathermap.org/geo/1.0/direct",
-        params={"q": name, "appid": api_key},
-        timeout=15,
-    )
-    response.raise_for_status()
-    data = response.json()
-    if not data:
-        raise ValueError(f"City '{name}' not found")
-    return {"name": data[0]["name"], "lat": data[0]["lat"], "lon": data[0]["lon"]}
-
-
 def fetch_and_write() -> list[str]:
-    api_key = os.getenv("OPENWEATHER_API_KEY")
+    api_key = Variable.get("OPENWEATHER_API_KEY")
     if not api_key:
         raise ValueError("OPENWEATHER_API_KEY environment variable is not set")
 
     run_timestamp = datetime.now(timezone.utc).isoformat()
     RAW_DIR.mkdir(parents=True, exist_ok=True)
 
-    city_names = list(CITY_NAMES)
-    cities_env = os.getenv("CITIES")
-    if cities_env:
-        city_names.extend(json.loads(cities_env))
+    cities = list(CITIES)
 
     written_files = []
     errors = []
 
-    for city_name in city_names:
+    for city in cities:
         try:
-            geo = geocode_city(city_name, api_key)
             response = requests.get(
                 "https://api.openweathermap.org/data/2.5/air_pollution",
-                params={"lat": geo["lat"], "lon": geo["lon"], "appid": api_key},
+                params={"lat": city["lat"], "lon": city["lon"], "appid": api_key},
                 timeout=15,
             )
             response.raise_for_status()
@@ -83,9 +72,9 @@ def fetch_and_write() -> list[str]:
             components = reading["components"]
             row = {
                 "run_timestamp": run_timestamp,
-                "city": geo["name"],
-                "lat": geo["lat"],
-                "lon": geo["lon"],
+                "city": city["name"],
+                "lat": city["lat"],
+                "lon": city["lon"],
                 "reading_at": datetime.fromtimestamp(
                     reading["dt"], tz=timezone.utc
                 ).isoformat(),
@@ -94,7 +83,7 @@ def fetch_and_write() -> list[str]:
                 **{field: components[field] for field in FIELDNAMES[7:]},
             }
 
-            city_filename = sanitize_city_name(geo["name"]) + ".csv"
+            city_filename = sanitize_city_name(city["name"]) + ".csv"
             city_file = RAW_DIR / city_filename
             file_exists = city_file.exists()
             with city_file.open("a", newline="") as f:
@@ -104,7 +93,7 @@ def fetch_and_write() -> list[str]:
                 writer.writerow(row)
             written_files.append(str(city_file))
         except Exception as e:
-            errors.append(f"Failed to fetch data for {city_name}: {e}")
+            errors.append(f"Failed to fetch data for {city}: {e}")
 
     if errors:
         print("\n".join(errors))
