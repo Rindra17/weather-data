@@ -106,7 +106,7 @@ def transform() -> str:
     cleaned_rows = deduplicate(cleaned_rows)
 
     CLEAN_DIR.mkdir(parents=True, exist_ok=True)
-    output_file = CLEAN_DIR / f"{datetime.now(timezone.utc).isoformat()}_weather_data_clean.csv"
+    output_file = CLEAN_DIR / "weather_data_clean.csv"
 
     with output_file.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
