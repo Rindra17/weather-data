@@ -11,11 +11,11 @@ from pathlib import Path
 import requests
 
 CITIES = [
-    {"name": "London", "lat": 51.5074, "lon": -0.1278},
-    {"name": "Paris", "lat": 48.8566, "lon": 2.3522},
-    {"name": "New York", "lat": 40.7128, "lon": -74.0060},
-    {"name": "Tokyo", "lat": 35.6762, "lon": 139.6503},
-    {"name": "Delhi", "lat": 28.6139, "lon": 77.2090},
+    {"name": "London", "country": "England", "lat": 51.5074, "lon": -0.1278},
+    {"name": "Paris", "country": "France", "lat": 48.8566, "lon": 2.3522},
+    {"name": "New York", "country": "USA", "lat": 40.7128, "lon": -74.0060},
+    {"name": "Tokyo", "country": "Japan", "lat": 35.6762, "lon": 139.6503},
+    {"name": "Delhi", "country": "India", "lat": 28.6139, "lon": 77.2090},
 ]
 
 AQI_LABELS = {1: "Good", 2: "Fair", 3: "Moderate", 4: "Poor", 5: "Very Poor"}
@@ -25,6 +25,7 @@ RAW_DIR = REPO_ROOT / "data" / "raw"
 FIELDNAMES = [
     "run_timestamp",
     "city",
+    "country",
     "lat",
     "lon",
     "reading_at",
@@ -52,7 +53,7 @@ def subtract_months(dt: datetime, months: int) -> datetime:
     month_index = dt.month - 1 - months
     year = dt.year + month_index // 12
     month = month_index % 12 + 1
-    day = min(dt.day, 28) 
+    day = min(dt.day, 28)
     return dt.replace(year=year, month=month, day=day)
 
 
@@ -78,7 +79,9 @@ def determine_first_launch() -> datetime:
     )
 
 
-def fetch_history(city: dict, start: datetime, end: datetime, api_key: str) -> list[dict]:
+def fetch_history(
+    city: dict, start: datetime, end: datetime, api_key: str
+) -> list[dict]:
     rows = []
     window_start = start
     while window_start < end:
@@ -101,6 +104,7 @@ def fetch_history(city: dict, start: datetime, end: datetime, api_key: str) -> l
                 {
                     "run_timestamp": "",
                     "city": city["name"],
+                    "country": city["country"],
                     "lat": city["lat"],
                     "lon": city["lon"],
                     "reading_at": datetime.fromtimestamp(
@@ -108,7 +112,7 @@ def fetch_history(city: dict, start: datetime, end: datetime, api_key: str) -> l
                     ).isoformat(),
                     "aqi": reading["main"]["aqi"],
                     "aqi_label": AQI_LABELS.get(reading["main"]["aqi"], "Unknown"),
-                    **{field: components[field] for field in FIELDNAMES[7:]},
+                    **{field: components[field] for field in FIELDNAMES[8:]},
                 }
             )
         window_start = window_end
@@ -130,18 +134,41 @@ def write_city_file(city_name: str, rows: list[dict]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--months", type=int, default=12, help="How many months of history to backfill (default: 12)")
-    parser.add_argument("--first-launch", type=str, default=None, help="ISO8601 timestamp to backfill up to (default: auto-detected)")
-    parser.add_argument("--api-key", type=str, default=None, help="OpenWeatherMap API key (default: $OPENWEATHER_API_KEY)")
-    parser.add_argument("--skip-fetch", action="store_true", help="Skip the live API backfill; just re-dedup the existing per-city files")
+    parser.add_argument(
+        "--months",
+        type=int,
+        default=12,
+        help="How many months of history to backfill (default: 12)",
+    )
+    parser.add_argument(
+        "--first-launch",
+        type=str,
+        default=None,
+        help="ISO8601 timestamp to backfill up to (default: auto-detected)",
+    )
+    parser.add_argument(
+        "--api-key",
+        type=str,
+        default=None,
+        help="OpenWeatherMap API key (default: $OPENWEATHER_API_KEY)",
+    )
+    parser.add_argument(
+        "--skip-fetch",
+        action="store_true",
+        help="Skip the live API backfill; just re-dedup the existing per-city files",
+    )
     args = parser.parse_args()
 
     first_launch = (
-        datetime.fromisoformat(args.first_launch) if args.first_launch else determine_first_launch()
+        datetime.fromisoformat(args.first_launch)
+        if args.first_launch
+        else determine_first_launch()
     )
     start = subtract_months(first_launch, args.months)
     print(f"First DAG launch detected at {first_launch.isoformat()}")
-    print(f"Backfilling {args.months} month(s) of history: {start.isoformat()} -> {first_launch.isoformat()}")
+    print(
+        f"Backfilling {args.months} month(s) of history: {start.isoformat()} -> {first_launch.isoformat()}"
+    )
 
     api_key = args.api_key or os.environ.get("OPENWEATHER_API_KEY")
     if not api_key and not args.skip_fetch:

@@ -16,6 +16,7 @@ AQI_LABELS = {
 FIELDNAMES = [
     "run_timestamp",
     "city",
+    "country",
     "lat",
     "lon",
     "reading_at",
@@ -34,12 +35,13 @@ FIELDNAMES = [
 BASE_DIR = Path(__file__).resolve().parent
 RAW_DIR = BASE_DIR / "data" / "raw"
 
+
 CITIES = [
-    {"name": "London", "lat": 51.5074, "lon": -0.1278},
-    {"name": "Paris", "lat": 48.8566, "lon": 2.3522},
-    {"name": "New York", "lat": 40.7128, "lon": -74.0060},
-    {"name": "Tokyo", "lat": 35.6762, "lon": 139.6503},
-    {"name": "Delhi", "lat": 28.6139, "lon": 77.2090},
+    {"name": "London", "country": "UK", "lat": 51.5074, "lon": -0.1278},
+    {"name": "Paris", "country": "France", "lat": 48.8566, "lon": 2.3522},
+    {"name": "New York", "country": "USA", "lat": 40.7128, "lon": -74.0060},
+    {"name": "Tokyo", "country": "Japan", "lat": 35.6762, "lon": 139.6503},
+    {"name": "Delhi", "country": "India", "lat": 28.6139, "lon": 77.2090},
 ]
 
 
@@ -73,6 +75,7 @@ def fetch_and_write() -> list[str]:
             row = {
                 "run_timestamp": run_timestamp,
                 "city": city["name"],
+                "country": city["country"],
                 "lat": city["lat"],
                 "lon": city["lon"],
                 "reading_at": datetime.fromtimestamp(
@@ -80,7 +83,7 @@ def fetch_and_write() -> list[str]:
                 ).isoformat(),
                 "aqi": reading["main"]["aqi"],
                 "aqi_label": AQI_LABELS.get(reading["main"]["aqi"], "Unknown"),
-                **{field: components[field] for field in FIELDNAMES[7:]},
+                **{field: components[field] for field in FIELDNAMES[8:]},
             }
 
             city_filename = sanitize_city_name(city["name"]) + ".csv"
