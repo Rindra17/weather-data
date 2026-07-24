@@ -9,7 +9,7 @@ from psycopg2.extras import execute_values
 
 load_dotenv()
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent
 CLEAN_FILE = BASE_DIR / "data" / "clean" / "weather_data_clean.csv"
 SCHEMA_FILE = BASE_DIR / "sql" / "schema.sql"
 DB_URL = os.getenv("DATABASE_URL")
