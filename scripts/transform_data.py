@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import csv
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent
 RAW_DIR = BASE_DIR / "data" / "raw"
 CLEAN_DIR = BASE_DIR / "data" / "clean"
 
@@ -86,11 +86,19 @@ def deduplicate(rows: list[dict]) -> list[dict]:
     return unique_rows
 
 
-def transform(input_file: str) -> str:
-    raw_rows = load_raw_rows(input_file)
+def transform() -> str:
+    raw_files = list(RAW_DIR.glob("*.csv"))
+
+    if not raw_files:
+        raise FileNotFoundError(f"No raw CSV files found in {RAW_DIR}")
+
+    all_rows = []
+    for raw_file in raw_files:
+        raw_rows = load_raw_rows(str(raw_file))
+        all_rows.extend(raw_rows)
 
     cleaned_rows = []
-    for row in raw_rows:
+    for row in all_rows:
         cleaned = clean_row(row)
         if cleaned is not None:
             cleaned_rows.append(enrich_row(cleaned))
@@ -105,10 +113,17 @@ def transform(input_file: str) -> str:
         writer.writeheader()
         writer.writerows(cleaned_rows)
 
+    print(f"  wrote {len(cleaned_rows)} rows")
+
     return str(output_file)
 
 
 def transform_task(**context):
-    input_file = context["ti"].xcom_pull(task_ids="extract_weather_data")
-    output_file = transform(input_file)
+    output_file = transform()
     return output_file
+
+
+if __name__ == "__main__":
+    result = transform()
+    print(f"Transformed data written to: {result}")
+
