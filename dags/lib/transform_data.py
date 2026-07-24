@@ -3,7 +3,7 @@ import csv
 
 BASE_DIR = Path(__file__).resolve().parent
 RAW_DIR = BASE_DIR / "data" / "raw"
-PROCESSED_DIR = BASE_DIR / "data" / "processed"
+CLEAN_DIR = BASE_DIR / "data" / "clean"
 
 FIELDNAMES = [
     "run_timestamp",
@@ -97,8 +97,8 @@ def transform() -> str:
 
     cleaned_rows = deduplicate(cleaned_rows)
 
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    output_file = PROCESSED_DIR / "weather_data_clean.csv"
+    CLEAN_DIR.mkdir(parents=True, exist_ok=True)
+    output_file = CLEAN_DIR / "weather_data_clean.csv"
 
     with output_file.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
