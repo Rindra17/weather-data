@@ -65,7 +65,7 @@ def load_data(conn):
             city_name = row['city']
             if city_name not in cities:
                 cur.execute(
-                    "SELECT city_key FROM dim_city WHERE city_name = %s",
+                    "SELECT city_id FROM dim_city WHERE city_name = %s",
                     (city_name,)
                 )
                 result = cur.fetchone()
@@ -75,12 +75,12 @@ def load_data(conn):
                     cur.execute("""
                         INSERT INTO dim_city (city_name, latitude, longitude)
                         VALUES (%s, %s, %s)
-                        RETURNING city_key
+                        RETURNING city_id
                     """, (city_name, float(row['lat']), float(row['lon'])))
                     cities[city_name] = cur.fetchone()[0]
         conn.commit()
     
-    print(f"   ✅ {len(cities)} cities loaded")
+    print(f" {len(cities)} cities loaded")
     
     print("Loading periods...")
     times = {}
@@ -91,7 +91,7 @@ def load_data(conn):
             
             if time_key not in times:
                 cur.execute(
-                    "SELECT time_key FROM dim_time WHERE reading_at = %s",
+                    "SELECT time_id FROM dim_time WHERE reading_at = %s",
                     (reading_at,)
                 )
                 result = cur.fetchone()
@@ -107,7 +107,7 @@ def load_data(conn):
                             reading_at, date, hour, day_of_week, 
                             is_weekend, month, year, quarter
                         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                        RETURNING time_key
+                        RETURNING time_id
                     """, (
                         reading_at,
                         reading_at.date(),
@@ -121,7 +121,7 @@ def load_data(conn):
                     times[time_key] = cur.fetchone()[0]
         conn.commit()
     
-    print(f"   ✅ {len(times)} periods loaded")
+    print(f" {len(times)} periods loaded")
     
     print("Loading facts...")
     inserted = 0
@@ -134,8 +134,8 @@ def load_data(conn):
             city_key = cities[row['city']]
             
             cur.execute("""
-                SELECT fact_key FROM fact_air_quality
-                WHERE time_key = %s AND city_key = %s
+                SELECT fact_id FROM fact_air_quality
+                WHERE time_id = %s AND city_id = %s
             """, (time_key, city_key))
             
             if cur.fetchone():
@@ -145,7 +145,7 @@ def load_data(conn):
             try:
                 cur.execute("""
                     INSERT INTO fact_air_quality (
-                        time_key, city_key, aqi, aqi_label,
+                        time_id, city_id, aqi, aqi_label,
                         co, no, no2, o3, so2, pm2_5, pm10, nh3,
                         dominant_pollutant
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
