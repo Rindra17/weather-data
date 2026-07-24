@@ -1,6 +1,6 @@
 CREATE TABLE dim_time (
     time_id SERIAL PRIMARY KEY,
-    reading_at TIMESTAMP,
+    reading_at TIMESTAMPZ NOT NULL UNIQUE,
     date DATE,
     hour INTEGER,
     day_of_week VARCHAR(10),
@@ -12,7 +12,7 @@ CREATE TABLE dim_time (
 
 CREATE TABLE dim_city (
     city_id SERIAL PRIMARY KEY,
-    city_name VARCHAR(100),
+    city_name VARCHAR(100) NOT NULL UNIQUE,
     country VARCHAR(100),
     latitude DECIMAL(10,6),
     longitude DECIMAL(10, 6)
@@ -32,5 +32,6 @@ CREATE TABLE fact_air_quality (
     pm2_5 DECIMAL(10,3),
     pm10 DECIMAL(10,3),
     nh3 DECIMAL(10,3),
-    dominant_pollutant VARCHAR(20)
+    dominant_pollutant VARCHAR(20),
+    UNIQUE (time_id, city_id)
 );
