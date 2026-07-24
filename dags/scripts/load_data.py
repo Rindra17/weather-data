@@ -3,32 +3,20 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 import psycopg2
 from psycopg2.extras import execute_values
 
-load_dotenv()
-
 BASE_DIR = Path(__file__).resolve().parent.parent
-CLEAN_FILE = BASE_DIR / "data" / "clean" / "weather_data_clean.csv"
+PROJECT_ROOT = BASE_DIR.parent
+CLEAN_FILE = PROJECT_ROOT / "data" / "clean" / "weather_data_clean.csv"
 SCHEMA_FILE = BASE_DIR / "sql" / "schema.sql"
-DB_URL = os.getenv("DATABASE_URL")
 
-if not DB_URL:
-    print(
-        "Undefined DATABASE_URL in .env file. Please set it before running the script."
-    )
-    sys.exit(1)
-
-if not CLEAN_FILE.exists():
-    print(f"CLEAN file not found: {CLEAN_FILE}")
-    print("Run the pipeline first to generate the clean file")
-    sys.exit(1)
-
-if not SCHEMA_FILE.exists():
-    print(f"schema.sql file not found: {SCHEMA_FILE}")
-    print("   Please be sure that sql/schema.sql exists")
-    sys.exit(1)
+ENV_FILE = PROJECT_ROOT / ".env"
+if ENV_FILE.exists():
+    DB_URL = dotenv_values(ENV_FILE).get("DATABASE_URL")
+else:
+    DB_URL = os.environ.get("DATABASE_URL")
 
 
 def create_schema(conn):
@@ -204,6 +192,22 @@ def show_stats(conn):
 def main():
     print("Starting data warehouse loading...")
     print("=" * 50)
+
+    if not DB_URL:
+        print(
+            "Undefined DATABASE_URL in .env file. Please set it before running the script."
+        )
+        sys.exit(1)
+
+    if not CLEAN_FILE.exists():
+        print(f"CLEAN file not found: {CLEAN_FILE}")
+        print("Run the pipeline first to generate the clean file")
+        sys.exit(1)
+
+    if not SCHEMA_FILE.exists():
+        print(f"schema.sql file not found: {SCHEMA_FILE}")
+        print("   Please be sure that sql/schema.sql exists")
+        sys.exit(1)
 
     conn = None
     try:

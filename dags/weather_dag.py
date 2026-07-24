@@ -2,7 +2,7 @@ from airflow.sdk import dag, task
 from datetime import datetime
 from pathlib import Path
 
-from scripts import extract_data, transform_data
+from scripts import extract_data, load_data, transform_data
 
 RAW_DIR = Path("/opt/airflow/raw")
 CLEAN_DIR = Path("/opt/airflow/clean")
@@ -27,7 +27,12 @@ def weather_pipeline():
         transform_data.CLEAN_DIR = CLEAN_DIR
         return transform_data.transform()
 
-    transform(extract())
+    @task
+    def load(clean_file: str):
+        load_data.CLEAN_FILE = Path(clean_file)
+        load_data.main()
+
+    load(transform(extract()))
 
 
 weather_pipeline()
