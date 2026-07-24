@@ -1,6 +1,6 @@
 CREATE TABLE dim_time (
     time_id SERIAL PRIMARY KEY,
-    reading_at TIMESTAMPZ NOT NULL UNIQUE,
+    reading_at TIMESTAMPTZ NOT NULL UNIQUE,
     date DATE,
     hour INTEGER,
     day_of_week VARCHAR(10),

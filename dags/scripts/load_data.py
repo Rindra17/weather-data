@@ -10,7 +10,7 @@ from psycopg2.extras import execute_values
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = BASE_DIR.parent
 CLEAN_FILE = PROJECT_ROOT / "data" / "clean" / "weather_data_clean.csv"
-SCHEMA_FILE = BASE_DIR / "sql" / "schema.sql"
+SCHEMA_FILE = PROJECT_ROOT / "sql" / "schema.sql"
 
 ENV_FILE = PROJECT_ROOT / ".env"
 if ENV_FILE.exists():
